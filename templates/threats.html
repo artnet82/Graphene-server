@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Угрозы{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Угрозы</h1>
+  <p class="muted">Все обнаруженные угрозы за всё время</p>
+</header>
+
+<div class="filters">
+  <a href="{{ url_for('threats_list') }}" class="chip {{ 'active' if not active_severity }}">Все</a>
+  <a href="{{ url_for('threats_list', severity='HIGH') }}" class="chip {{ 'active' if active_severity=='HIGH' }}">HIGH</a>
+  <a href="{{ url_for('threats_list', severity='MEDIUM') }}" class="chip {{ 'active' if active_severity=='MEDIUM' }}">MEDIUM</a>
+  <a href="{{ url_for('threats_list', severity='LOW') }}" class="chip {{ 'active' if active_severity=='LOW' }}">LOW</a>
+</div>
+
+{% if threats %}
+<table class="table">
+  <thead><tr><th>Severity</th><th>Цель</th><th>Угроза</th><th>Устройство</th><th>Время</th></tr></thead>
+  <tbody>
+  {% for t in threats %}
+    <tr>
+      <td><span class="sev sev-{{ t.severity|lower }}">{{ t.severity }}</span></td>
+      <td class="mono small ellipsis" style="max-width:260px">{{ t.package_name }}</td>
+      <td>
+        <div>{{ t.threat_name }}</div>
+        {% if t.description %}<div class="muted small">{{ t.description[:160] }}</div>{% endif %}
+      </td>
+      <td class="mono small">
+        <a href="{{ url_for('device_detail', device_id=t.device_id) }}">{{ t.device_id[:10] }}…</a>
+      </td>
+      <td class="mono small">{{ t.created_at|dt }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">Угроз не найдено</p>
+{% endif %}
+{% endblock %}
