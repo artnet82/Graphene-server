@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+{% block main_class %}login-wrap{% endblock %}
+{% block content %}
+<form class="login-card" method="post">
+  <div class="login-shield"></div>
+  <h1>ГРАФЕН</h1>
+  <p class="muted">Панель управления защитой</p>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <label>Логин</label>
+  <input type="text" name="username" autofocus required value="admin">
+
+  <label>Пароль</label>
+  <input type="password" name="password" required>
+
+  <button type="submit">Войти</button>
+
+  <p class="muted small center">Лабораторный доступ · только для администратора</p>
+</form>
+{% endblock %}
