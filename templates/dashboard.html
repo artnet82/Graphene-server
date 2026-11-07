@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Обзор{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Обзор</h1>
+  <p class="muted">Состояние защиты сети в реальном времени</p>
+</header>
+
+<section class="grid">
+  <div class="stat">
+    <span class="stat-label">Устройства</span>
+    <span class="stat-value">{{ total_devices }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Проверки</span>
+    <span class="stat-value">{{ total_scans }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Угрозы</span>
+    <span class="stat-value {{ 'danger' if total_threats else '' }}">{{ total_threats }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Критические</span>
+    <span class="stat-value {{ 'danger' if high_threats else '' }}">{{ high_threats }}</span>
+  </div>
+</section>
+
+<section class="cols">
+  <div class="card">
+    <div class="card-head">
+      <h2>Последние угрозы</h2>
+      <a href="{{ url_for('threats_list') }}" class="link">все →</a>
+    </div>
+    {% if recent_threats %}
+      <ul class="list">
+        {% for t in recent_threats %}
+        <li>
+          <span class="sev sev-{{ t.severity|lower }}">{{ t.severity }}</span>
+          <div class="grow">
+            <div class="mono ellipsis">{{ t.package_name }}</div>
+            <div class="muted small">{{ t.threat_name }}</div>
+          </div>
+          <span class="muted small">{{ t.created_at|dt("%H:%M") }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}<p class="muted">Угроз не обнаружено</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Активные устройства</h2>
+      <a href="{{ url_for('devices') }}" class="link">все →</a>
+    </div>
+    {% if devices %}
+      <ul class="list">
+        {% for d in devices[:8] %}
+        <li>
+          <div class="grow">
+            <a href="{{ url_for('device_detail', device_id=d.device_id) }}" class="mono">
+              {{ d.manufacturer }} {{ d.model }}
+            </a>
+            <div class="muted small">Android {{ d.android_version }} · {{ d.last_seen|dt }}</div>
+          </div>
+          <span class="risk risk-{{ 'high' if d.last_risk_score>=30 else 'ok' }}">{{ d.last_risk_score }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}<p class="muted">Нет подключённых устройств</p>{% endif %}
+  </div>
+</section>
+
+<section class="cols">
+  <div class="card">
+    <div class="card-head"><h2>Распределение угроз</h2></div>
+    {% set total = severity_breakdown.values()|sum if severity_breakdown else 0 %}
+    {% if total %}
+      {% for sev, cnt in severity_breakdown.items() %}
+        <div class="bar-row">
+          <span class="sev sev-{{ sev|lower }}">{{ sev }}</span>
+          <div class="bar"><span style="width: {{ (cnt / total * 100)|round(1) }}%"></span></div>
+          <span class="mono small">{{ cnt }}</span>
+        </div>
+      {% endfor %}
+    {% else %}<p class="muted">Угроз нет</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Последние проверки</h2></div>
+    {% if recent_scans %}
+      <ul class="list compact">
+        {% for s in recent_scans %}
+        <li>
+          <div class="grow">
+            <div class="mono small ellipsis">{{ s.device_id[:16] }}…</div>
+            <div class="muted small">{{ s.created_at|dt }}</div>
+          </div>
+          <span class="mono small">{{ s.threats_count }} угроз</span>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}<p class="muted">Нет проверок</p>{% endif %}
+  </div>
+</section>
+{% endblock %}
