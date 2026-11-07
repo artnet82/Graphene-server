@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Сеть{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Сеть</h1>
+  <p class="muted">DNS-трафик, перехваченный VPN-монитором устройств</p>
+</header>
+
+<section class="grid">
+  <div class="stat"><span class="stat-label">Уникальные домены</span><span class="stat-value">{{ total_domains }}</span></div>
+  <div class="stat"><span class="stat-label">События DNS</span><span class="stat-value">{{ total_events }}</span></div>
+</section>
+
+<section class="cols">
+  <div class="card">
+    <div class="card-head"><h2>Топ доменов</h2></div>
+    {% if top_domains %}
+    <table class="table compact">
+      <thead><tr><th>Домен</th><th>Запросов</th></tr></thead>
+      <tbody>
+      {% for dom, hits in top_domains %}
+        <tr><td class="mono small">{{ dom }}</td><td class="mono small">{{ hits }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">Нет данных</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Активность по устройствам</h2></div>
+    {% if device_rows %}
+    <table class="table compact">
+      <thead><tr><th>Устройство</th><th>DNS</th></tr></thead>
+      <tbody>
+      {% for dev, hits in device_rows %}
+        <tr>
+          <td class="mono small">
+            <a href="{{ url_for('device_detail', device_id=dev) }}">{{ dev[:14] }}…</a>
+          </td>
+          <td class="mono small">{{ hits }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">Нет данных</p>{% endif %}
+  </div>
+</section>
+{% endblock %}
