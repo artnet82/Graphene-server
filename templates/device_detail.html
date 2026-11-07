@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}{{ device.model }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <a href="{{ url_for('devices') }}" class="link small">← все устройства</a>
+  <h1>{{ device.manufacturer }} {{ device.model }}</h1>
+  <p class="muted mono small">{{ device.device_id }}</p>
+</header>
+
+<section class="grid">
+  <div class="stat"><span class="stat-label">Android</span><span class="stat-value">{{ device.android_version }}</span></div>
+  <div class="stat"><span class="stat-label">SDK</span><span class="stat-value">{{ device.sdk_int }}</span></div>
+  <div class="stat"><span class="stat-label">Root</span><span class="stat-value {{ 'danger' if device.rooted }}">{{ 'да' if device.rooted else 'нет' }}</span></div>
+  <div class="stat"><span class="stat-label">Риск</span><span class="stat-value {{ 'danger' if device.last_risk_score>=30 }}">{{ device.last_risk_score }}</span></div>
+</section>
+
+<section class="cols">
+  <div class="card">
+    <div class="card-head"><h2>Угрозы ({{ threats|length }})</h2></div>
+    {% if threats %}
+      <ul class="list">
+        {% for t in threats %}
+        <li>
+          <span class="sev sev-{{ t.severity|lower }}">{{ t.severity }}</span>
+          <div class="grow">
+            <div class="mono ellipsis">{{ t.package_name }}</div>
+            <div class="muted small">{{ t.threat_name }}</div>
+            {% if t.description %}<div class="muted small">{{ t.description[:200] }}</div>{% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}<p class="muted">Чисто</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>История проверок</h2></div>
+    <ul class="list compact">
+      {% for s in scans %}
+      <li>
+        <div class="grow">
+          <div class="mono small">{{ s.created_at|dt }}</div>
+          <div class="muted small">{{ s.scanned_apps }} приложений</div>
+        </div>
+        <span class="mono small">{{ s.threats_count }} угроз · {{ s.risk_score }}</span>
+      </li>
+      {% else %}
+      <li class="muted">Нет проверок</li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Приложения ({{ apps|length }})</h2></div>
+  <table class="table compact">
+    <thead><tr><th>Приложение</th><th>Пакет</th><th>Разрешения</th><th>Sideload</th></tr></thead>
+    <tbody>
+    {% for a in apps %}
+      <tr>
+        <td>{{ a.app_name }}</td>
+        <td class="mono small">{{ a.package_name }}</td>
+        <td class="small">
+          {% set perms = a.permissions|fromjson %}
+          {% for p in perms[:3] %}<span class="chip">{{ p.split('.')[-1] }}</span>{% endfor %}
+          {% if perms|length > 3 %}<span class="muted">+{{ perms|length - 3 }}</span>{% endif %}
+        </td>
+        <td>{% if a.is_sideloaded %}<span class="sev sev-medium">SL</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="cols">
+  <div class="card">
+    <div class="card-head"><h2>Контакты ({{ contacts|length }})</h2></div>
+    <ul class="list compact">
+      {% for c in contacts[:50] %}
+      <li>
+        <div class="grow">
+          <div>{{ c.display_name or '—' }}</div>
+          <div class="muted small mono">{{ (c.phones|fromjson)|join(', ') }}</div>
+        </div>
+      </li>
+      {% else %}
+      <li class="muted">Пусто</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Журнал вызовов</h2></div>
+    <ul class="list compact">
+      {% for c in calls[:50] %}
+      <li>
+        <div class="grow">
+          <div class="mono small">{{ c.number }}</div>
+          <div class="muted small">тип {{ c.type }} · {{ c.duration }} сек</div>
+        </div>
+      </li>
+      {% else %}
+      <li class="muted">Пусто</li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Последние SMS ({{ sms|length }})</h2></div>
+  <ul class="list compact">
+    {% for s in sms[:50] %}
+    <li>
+      <div class="grow">
+        <div class="mono small">{{ s.address }}</div>
+        <div class="muted small">{{ s.body_preview }}</div>
+      </div>
+    </li>
+    {% else %}
+    <li class="muted">Пусто</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Сканированные файлы ({{ files|length }})</h2></div>
+  <table class="table compact">
+    <thead><tr><th>Путь</th><th>Расширение</th><th>Размер</th><th>SHA-256</th></tr></thead>
+    <tbody>
+    {% for f in files[:100] %}
+      <tr>
+        <td class="mono small ellipsis" style="max-width:400px">{{ f.path }}</td>
+        <td>{{ f.extension }}</td>
+        <td class="mono small">{{ (f.size / 1024)|round(1) }} KB</td>
+        <td class="mono small">{{ (f.sha256 or '—')[:16] }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Нет файлов</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>DNS-активность ({{ dns|length }})</h2></div>
+  <table class="table compact">
+    <thead><tr><th>Домен</th><th>Время</th></tr></thead>
+    <tbody>
+    {% for e in dns[:100] %}
+      <tr>
+        <td class="mono small">{{ e.domain }}</td>
+        <td class="mono small">{{ e.timestamp }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="2" class="muted">Пусто</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
