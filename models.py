@@ -1,7 +1,7 @@
-from flask_sqlalchemy import SQLAlchemy
+# models.py
 from datetime import datetime
 
-db = SQLAlchemy()
+from extensions import db
 
 
 class Device(db.Model):
@@ -17,6 +17,10 @@ class Device(db.Model):
     first_seen = db.Column(db.DateTime, default=datetime.utcnow)
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
     last_risk_score = db.Column(db.Integer, default=0)
+
+    # ---- API auth ----
+    api_token_hash = db.Column(db.String(64), index=True)
+    api_token_created_at = db.Column(db.DateTime)
 
 
 class ScanSession(db.Model):
@@ -113,7 +117,7 @@ class UploadedFile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     upload_id = db.Column(db.String(64), unique=True, index=True)
     original_name = db.Column(db.String(255))
-    relative_path = db.Column(db.Text)             # NEW — путь в папке клиента
+    relative_path = db.Column(db.Text)
     sha256 = db.Column(db.String(64), index=True)
     size = db.Column(db.BigInteger)
     file_type = db.Column(db.String(32))
@@ -125,15 +129,11 @@ class UploadedFile(db.Model):
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-# ============================================================
-#  Синхронизация папок (Вариант B)
-# ============================================================
-
 class SyncedFolder(db.Model):
     __tablename__ = "synced_folders"
     id = db.Column(db.Integer, primary_key=True)
     device_id = db.Column(db.String(64), index=True)
-    folder_uri = db.Column(db.Text)                # content://tree/...
+    folder_uri = db.Column(db.Text)
     display_name = db.Column(db.String(255))
     added_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_scan = db.Column(db.DateTime)
@@ -154,7 +154,7 @@ class SyncedFile(db.Model):
     modified = db.Column(db.BigInteger)
     mime = db.Column(db.String(64))
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
-    upload_id = db.Column(db.String(64))           # если файл уже скачан
+    upload_id = db.Column(db.String(64))
 
 
 class FileRequest(db.Model):
@@ -164,7 +164,7 @@ class FileRequest(db.Model):
     device_id = db.Column(db.String(64), index=True)
     relative_path = db.Column(db.Text)
     file_name = db.Column(db.String(255))
-    status = db.Column(db.String(16), default="pending")  # pending/sent/rejected/expired
+    status = db.Column(db.String(16), default="pending")
     created_by = db.Column(db.String(128))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     fulfilled_at = db.Column(db.DateTime)

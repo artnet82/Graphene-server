@@ -12,9 +12,6 @@
   </div>
 </header>
 
-<!-- ============================================================
-     Метаданные
-     ============================================================ -->
 <section class="grid">
   <div class="stat">
     <span class="stat-label">Риск</span>
@@ -38,7 +35,26 @@
   <div class="card-head"><h2>Метаданные</h2></div>
   <table class="table compact">
     <tbody>
-      <tr><th style="width:180px">Upload ID</th>
+      <tr>
+        <th style="width:180px">Источник</th>
+        <td class="small">
+          {% if record.uploaded_by and record.uploaded_by.startswith('api:') %}
+            {% set dev_id = record.uploaded_by[4:] %}
+            <a class="link mono" href="{{ url_for('device_detail', device_id=dev_id) }}">
+              📱 с устройства {{ dev_id[:16] }}…
+            </a>
+            {% if record.relative_path %}
+              <div class="muted small mono" style="margin-top:4px" title="{{ record.relative_path }}">
+                {{ record.relative_path }}
+              </div>
+            {% endif %}
+          {% else %}
+            🖥 загружен вручную
+            <span class="muted small">({{ record.uploaded_by or 'admin' }})</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr><th>Upload ID</th>
           <td class="mono small">{{ record.upload_id }}</td></tr>
       <tr><th>SHA-256</th>
           <td class="mono small">{{ record.sha256 }}</td></tr>
@@ -56,6 +72,7 @@
           <td class="mono small ellipsis">{{ record.stored_path or '—' }}</td></tr>
     </tbody>
   </table>
+
   <div class="action-row">
     <a class="upload-btn" href="{{ url_for('download_uploaded', upload_id=record.upload_id) }}">
       Скачать оригинал
@@ -64,14 +81,12 @@
           action="{{ url_for('delete_uploaded', upload_id=record.upload_id) }}"
           onsubmit="return confirm('Удалить файл и запись?');"
           style="display:inline">
-      <button type="submit" class="upload-btn danger-btn">Удалить</button>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="upload-btn subtle-danger-btn">Удалить</button>
     </form>
   </div>
 </section>
 
-<!-- ============================================================
-     Детекции
-     ============================================================ -->
 <section class="card">
   <div class="card-head">
     <h2>Детекции ({{ detections|length }})</h2>

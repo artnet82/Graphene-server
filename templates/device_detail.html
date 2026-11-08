@@ -7,9 +7,6 @@
   <p class="muted mono small">{{ device.device_id }}</p>
 </header>
 
-<!-- ============================================================
-     Сводка
-     ============================================================ -->
 <section class="grid">
   <div class="stat">
     <span class="stat-label">Android</span>
@@ -29,9 +26,6 @@
   </div>
 </section>
 
-<!-- ============================================================
-     Разрешённые папки
-     ============================================================ -->
 <section class="card">
   <div class="card-head">
     <h2>Разрешённые папки ({{ folders|length }})</h2>
@@ -54,9 +48,6 @@
   {% endif %}
 </section>
 
-<!-- ============================================================
-     Файлы в разрешённых папках — с очередью запросов
-     ============================================================ -->
 <section class="card">
   <div class="card-head">
     <h2>Файлы в разрешённых папках ({{ synced_files|length }})</h2>
@@ -114,6 +105,7 @@
             <form method="post"
                   action="{{ url_for('cancel_request', device_id=device.device_id, request_id=pending.request_id) }}"
                   style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="upload-btn subtle-danger-btn"
                       style="padding:6px 12px;font-size:12px">
                 Отменить
@@ -128,6 +120,7 @@
             <form method="post"
                   action="{{ url_for('request_file', device_id=device.device_id) }}"
                   style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="relative_path" value="{{ f.relative_path }}">
               <button type="submit" class="upload-btn"
                       style="padding:6px 12px;font-size:12px"
@@ -149,9 +142,6 @@
   {% endif %}
 </section>
 
-<!-- ============================================================
-     Запросы с этого устройства
-     ============================================================ -->
 <section class="card">
   <div class="card-head">
     <h2>Запросы с этого устройства ({{ device_requests|length }})</h2>
@@ -194,6 +184,7 @@
             <form method="post"
                   action="{{ url_for('cancel_request', device_id=device.device_id, request_id=r.request_id) }}"
                   style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="upload-btn subtle-danger-btn"
                       style="padding:4px 10px;font-size:11px">
                 Отменить
@@ -210,9 +201,6 @@
   {% endif %}
 </section>
 
-<!-- ============================================================
-     Угрозы и история проверок
-     ============================================================ -->
 <section class="cols">
   <div class="card">
     <div class="card-head"><h2>Угрозы ({{ threats|length }})</h2></div>
@@ -246,9 +234,6 @@
   </div>
 </section>
 
-<!-- ============================================================
-     Приложения
-     ============================================================ -->
 <section class="card">
   <div class="card-head"><h2>Приложения ({{ apps|length }})</h2></div>
   <table class="table compact">
@@ -265,9 +250,6 @@
   </table>
 </section>
 
-<!-- ============================================================
-     Контакты, вызовы, SMS, DNS
-     ============================================================ -->
 <section class="cols">
   <div class="card">
     <div class="card-head"><h2>Контакты ({{ contacts|length }})</h2></div>

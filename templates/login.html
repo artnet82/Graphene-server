@@ -1,22 +1,36 @@
-{% extends "base.html" %}
-{% block title %}Вход{% endblock %}
-{% block main_class %}login-wrap{% endblock %}
-{% block content %}
-<form class="login-card" method="post">
-  <div class="login-shield"></div>
-  <h1>GRAPHENE SERVER</h1>
-  <p class="muted">Панель управления защитой</p>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>GRAPHENE ANTIVIRYS ADMIN  · Вход</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/graphene.css') }}">
+</head>
+<body>
+<div class="login-wrap">
+  <form method="post" class="login-card">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="login-shield"></div>
+    <h1>GRAPHENE ANTIVIRYS ADMIN </h1>
+    <p class="muted small">Administrative console</p>
 
-  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
 
-  <label>Логин</label>
-  <input type="text" name="username" autofocus required value="admin">
+    <label for="username">Логин</label>
+    <input id="username" name="username" type="text" required autofocus autocomplete="username">
 
-  <label>Пароль</label>
-  <input type="password" name="password" required>
+    <label for="password">Пароль</label>
+    <input id="password" name="password" type="password" required autocomplete="current-password">
 
-  <button type="submit">Войти</button>
+    <button type="submit">Войти</button>
 
-  <p class="muted small center">Доступ · только для администратора</p>
-</form>
-{% endblock %}
+    <p class="muted small center">FOR GRAPHENE OS</p>
+  </form>
+</div>
+</body>
+</html>

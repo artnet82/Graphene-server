@@ -1,12 +1,16 @@
+# app.py
+import hashlib
 import json
 import os
+import secrets
 import shutil
 import uuid
 from datetime import datetime
+from functools import wraps
 
 from flask import (
     Flask, render_template, request, jsonify, redirect,
-    url_for, flash, abort, send_file
+    url_for, flash, abort, send_file, current_app
 )
 from flask_login import (
     LoginManager, UserMixin, login_user, login_required,
@@ -15,8 +19,10 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 from sqlalchemy import func
 
+from config import Config, ProdConfig
+from extensions import db, csrf, migrate
 from models import (
-    db, Device, ScanSession, AppRecord, Contact, SmsRecord,
+    Device, ScanSession, AppRecord, Contact, SmsRecord,
     CallRecord, ScannedFile, DnsEvent, Threat, UploadedFile,
     SyncedFolder, SyncedFile, FileRequest,
 )
@@ -24,21 +30,34 @@ from analyzer import analyze, analyze_file
 
 
 # ============================================================
-#  Конфигурация
+#  App factory
 # ============================================================
-class Config:
-    SECRET_KEY = os.environ.get("GRAPHENE_SECRET", "change-me-graphene-lab")
-    SQLALCHEMY_DATABASE_URI = "sqlite:///graphene.db"
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    ADMIN_USERNAME = os.environ.get("GRAPHENE_ADMIN_USER", "admin")
-    _ADMIN_HASH = os.environ.get("GRAPHENE_ADMIN_HASH")
-    ADMIN_PASSWORD_HASH = _ADMIN_HASH or generate_password_hash("graphene2024")
-    MAX_CONTENT_LENGTH = 110 * 1024 * 1024
+def create_app() -> Flask:
+    app = Flask(__name__)
+
+    env = os.environ.get("GRAPHENE_ENV", "dev").lower()
+    if env == "prod":
+        ProdConfig.validate()
+        app.config.from_object(ProdConfig)
+    else:
+        app.config.from_object(Config)
+
+    db.init_app(app)
+    csrf.init_app(app)
+    migrate.init_app(app, db)
+
+    if not app.config["ADMIN_PASSWORD_HASH"]:
+        if app.config.get("IS_PRODUCTION"):
+            raise RuntimeError("GRAPHENE_ADMIN_HASH must be set in production")
+        app.logger.warning(
+            "GRAPHENE_ADMIN_HASH not set — using default dev password 'graphene2024'"
+        )
+        app.config["ADMIN_PASSWORD_HASH"] = generate_password_hash("graphene2024")
+
+    return app
 
 
-app = Flask(__name__)
-app.config.from_object(Config)
-db.init_app(app)
+app = create_app()
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
@@ -46,7 +65,6 @@ login_manager.login_message = "Требуется вход"
 
 UPLOAD_DIR = os.path.join(app.instance_path, "uploads")
 os.makedirs(os.path.join(UPLOAD_DIR, "tmp"), exist_ok=True)
-
 MAX_FILE_BYTES = 100 * 1024 * 1024
 
 
@@ -89,7 +107,86 @@ def filesize_filter(n):
 
 
 # ============================================================
-#  API клиента — телеметрия
+#  API auth helpers
+# ============================================================
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _extract_bearer() -> str | None:
+    h = request.headers.get("Authorization", "")
+    if not h.startswith("Bearer "):
+        return None
+    return h[7:].strip() or None
+
+
+def require_api_token(fn):
+    """
+    Проверяет Authorization: Bearer <token>.
+    Устройство ищется по хэшу токена.
+    Если GRAPHENE_API_AUTH_ENABLED=0 — пропускает всех (dev-only).
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not current_app.config["API_AUTH_ENABLED"]:
+            return fn(*args, **kwargs)
+
+        token = _extract_bearer()
+        if not token:
+            return jsonify({"error": "authorization_required"}), 401
+
+        device = Device.query.filter_by(api_token_hash=_hash_token(token)).first()
+        if not device:
+            return jsonify({"error": "invalid_token"}), 401
+
+        request.api_device = device
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def _token_matches_device(device, device_id: str) -> bool:
+    return device is not None and device.device_id == device_id
+
+
+# ============================================================
+#  API — регистрация (единственный endpoint без токена)
+# ============================================================
+@app.route("/api/v1/register", methods=["POST"])
+def api_register():
+    data = request.get_json(force=True, silent=True) or {}
+    dev = data.get("device") or {}
+    device_id = (dev.get("device_id") or "").strip()
+    if not device_id or len(device_id) < 8:
+        return jsonify({"error": "device_id required (>=8 chars)"}), 400
+
+    device = Device.query.filter_by(device_id=device_id).first()
+    if not device:
+        device = Device(device_id=device_id, first_seen=datetime.utcnow())
+        db.session.add(device)
+
+    device.manufacturer = (dev.get("manufacturer") or "")[:64]
+    device.model = (dev.get("model") or "")[:64]
+    device.android_version = (dev.get("android_version") or "")[:16]
+    device.sdk_int = dev.get("sdk_int") or 0
+    device.security_patch = (dev.get("security_patch") or "")[:32]
+    device.rooted = bool(dev.get("rooted"))
+    device.last_seen = datetime.utcnow()
+
+    new_token = secrets.token_urlsafe(48)
+    device.api_token_hash = _hash_token(new_token)
+    device.api_token_created_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({
+        "device_id": device_id,
+        "api_token": new_token,
+        "issued_at": device.api_token_created_at.isoformat() + "Z",
+    })
+
+
+# ============================================================
+#  API — телеметрия
 # ============================================================
 @app.route("/api/v1/ping")
 def ping():
@@ -97,22 +194,25 @@ def ping():
 
 
 @app.route("/api/v1/scan", methods=["POST"])
+@require_api_token
 def api_scan():
     data = request.get_json(force=True, silent=True) or {}
     dev = data.get("device") or {}
     device_id = (dev.get("device_id") or "").strip()
     if not device_id:
         return jsonify({"error": "device_id required"}), 400
+    if not _token_matches_device(getattr(request, "api_device", None), device_id):
+        return jsonify({"error": "token_device_mismatch"}), 403
 
     device = Device.query.filter_by(device_id=device_id).first()
     if not device:
-        device = Device(device_id=device_id)
-        db.session.add(device)
-    device.manufacturer = dev.get("manufacturer")
-    device.model = dev.get("model")
-    device.android_version = dev.get("android_version")
-    device.sdk_int = dev.get("sdk_int") or 0
-    device.security_patch = dev.get("security_patch")
+        return jsonify({"error": "not_registered"}), 401
+
+    device.manufacturer = dev.get("manufacturer") or device.manufacturer
+    device.model = dev.get("model") or device.model
+    device.android_version = dev.get("android_version") or device.android_version
+    device.sdk_int = dev.get("sdk_int") or device.sdk_int
+    device.security_patch = dev.get("security_patch") or device.security_patch
     device.rooted = bool(dev.get("rooted"))
     device.last_seen = datetime.utcnow()
 
@@ -216,19 +316,21 @@ def api_scan():
 
 
 # ============================================================
-#  API клиента — синхронизация папок
+#  API — синхронизация папок
 # ============================================================
 @app.route("/api/v1/sync/folders", methods=["POST"])
+@require_api_token
 def api_sync_folders():
     data = request.get_json(force=True) or {}
     device_id = (data.get("device_id") or "").strip()
     if not device_id:
         return jsonify({"error": "device_id required"}), 400
+    if not _token_matches_device(getattr(request, "api_device", None), device_id):
+        return jsonify({"error": "token_device_mismatch"}), 403
 
     folders = data.get("folders") or []
     incoming_uris = {f.get("uri") for f in folders if f.get("uri")}
 
-    # удалить папки, которых больше нет
     for existing in SyncedFolder.query.filter_by(device_id=device_id).all():
         if existing.folder_uri not in incoming_uris:
             SyncedFile.query.filter_by(folder_id=existing.id).delete()
@@ -252,11 +354,14 @@ def api_sync_folders():
 
 
 @app.route("/api/v1/sync/files", methods=["POST"])
+@require_api_token
 def api_sync_files():
     data = request.get_json(force=True) or {}
     device_id = (data.get("device_id") or "").strip()
     if not device_id:
         return jsonify({"error": "device_id required"}), 400
+    if not _token_matches_device(getattr(request, "api_device", None), device_id):
+        return jsonify({"error": "token_device_mismatch"}), 403
 
     files = data.get("files") or []
     folder_map = {f.folder_uri: f for f in SyncedFolder.query.filter_by(device_id=device_id).all()}
@@ -266,8 +371,7 @@ def api_sync_files():
     now = datetime.utcnow()
     added = 0
     for fd in files:
-        uri = fd.get("folder_uri")
-        folder = folder_map.get(uri)
+        folder = folder_map.get(fd.get("folder_uri"))
         if not folder:
             continue
         db.session.add(SyncedFile(
@@ -291,10 +395,13 @@ def api_sync_files():
 
 
 @app.route("/api/v1/sync/pending")
+@require_api_token
 def api_sync_pending():
     device_id = (request.args.get("device_id") or "").strip()
     if not device_id:
         return jsonify({"error": "device_id required"}), 400
+    if not _token_matches_device(getattr(request, "api_device", None), device_id):
+        return jsonify({"error": "token_device_mismatch"}), 403
 
     pending = (FileRequest.query
                .filter_by(device_id=device_id, status="pending")
@@ -314,13 +421,16 @@ def api_sync_pending():
 
 
 # ============================================================
-#  Загрузка файла (клиент → сервер)
+#  API — загрузка файла с устройства
 # ============================================================
 @app.route("/api/v1/upload", methods=["POST"])
+@require_api_token
 def api_upload():
     device_id = (request.form.get("device_id") or "").strip()
     if not device_id:
         return jsonify({"error": "device_id required"}), 400
+    if not _token_matches_device(getattr(request, "api_device", None), device_id):
+        return jsonify({"error": "token_device_mismatch"}), 403
 
     file = request.files.get("file")
     if not file or not file.filename:
@@ -348,9 +458,7 @@ def api_upload():
             req.upload_id = record.upload_id
 
     if relative_path:
-        sf = SyncedFile.query.filter_by(
-            device_id=device_id, relative_path=relative_path
-        ).first()
+        sf = SyncedFile.query.filter_by(device_id=device_id, relative_path=relative_path).first()
         if sf:
             sf.upload_id = record.upload_id
 
@@ -399,30 +507,24 @@ def logout():
 @login_required
 def dashboard():
     devices = Device.query.order_by(Device.last_seen.desc()).all()
-    total_devices = len(devices)
-    total_scans = ScanSession.query.count()
-    total_threats = Threat.query.count()
-    high_threats = Threat.query.filter_by(severity="HIGH").count()
-    recent_threats = Threat.query.order_by(Threat.created_at.desc()).limit(12).all()
-    recent_scans = ScanSession.query.order_by(ScanSession.created_at.desc()).limit(12).all()
-    sev_rows = db.session.query(Threat.severity, func.count(Threat.id)).group_by(Threat.severity).all()
-    severity_breakdown = {s: c for s, c in sev_rows}
-    uploaded_count = UploadedFile.query.count()
-    pending_requests = FileRequest.query.filter_by(status="pending").count()
-
     return render_template(
         "dashboard.html",
         devices=devices,
-        total_devices=total_devices,
-        total_scans=total_scans,
-        total_threats=total_threats,
-        high_threats=high_threats,
-        recent_threats=recent_threats,
-        recent_scans=recent_scans,
-        severity_breakdown=severity_breakdown,
-        uploaded_count=uploaded_count,
-        pending_requests=pending_requests,
+        total_devices=len(devices),
+        total_scans=ScanSession.query.count(),
+        total_threats=Threat.query.count(),
+        high_threats=Threat.query.filter_by(severity="HIGH").count(),
+        recent_threats=Threat.query.order_by(Threat.created_at.desc()).limit(12).all(),
+        recent_scans=ScanSession.query.order_by(ScanSession.created_at.desc()).limit(12).all(),
+        severity_breakdown={
+            s: c for s, c in db.session.query(
+                Threat.severity, func.count(Threat.id)
+            ).group_by(Threat.severity).all()
+        },
+        uploaded_count=UploadedFile.query.count(),
+        pending_requests=FileRequest.query.filter_by(status="pending").count(),
     )
+
 
 @app.route("/devices")
 @login_required
@@ -486,9 +588,7 @@ def device_detail(device_id):
                        .order_by(FileRequest.created_at.desc())
                        .limit(50).all())
 
-    # Для каждой строки файла: pending-запрос (если есть) и последний выполненный
-    pending_by_path = {}
-    last_sent_by_path = {}
+    pending_by_path, last_sent_by_path = {}, {}
     for r in FileRequest.query.filter_by(device_id=device_id).all():
         if r.status == "pending":
             pending_by_path.setdefault(r.relative_path, r)
@@ -507,6 +607,7 @@ def device_detail(device_id):
         last_sent_by_path=last_sent_by_path,
     )
 
+
 @app.route("/devices/<device_id>/request-file", methods=["POST"])
 @login_required
 def request_file(device_id):
@@ -521,9 +622,9 @@ def request_file(device_id):
         flash("Файл не найден в синхронизированных папках")
         return redirect(url_for("device_detail", device_id=device_id))
 
-    existing = (FileRequest.query
-                .filter_by(device_id=device_id, relative_path=relative_path, status="pending")
-                .first())
+    existing = FileRequest.query.filter_by(
+        device_id=device_id, relative_path=relative_path, status="pending"
+    ).first()
     if existing:
         flash("Запрос на этот файл уже в очереди")
         return redirect(url_for("device_detail", device_id=device_id))
@@ -579,16 +680,17 @@ def network():
         .group_by(DnsEvent.domain).order_by(func.count(DnsEvent.id).desc())
         .limit(50).all()
     )
-    total_domains = db.session.query(func.count(func.distinct(DnsEvent.domain))).scalar() or 0
-    total_events = DnsEvent.query.count()
-    device_rows = (
-        db.session.query(DnsEvent.device_id, func.count(DnsEvent.id).label("hits"))
-        .group_by(DnsEvent.device_id).order_by(func.count(DnsEvent.id).desc())
-        .limit(15).all()
+    return render_template(
+        "network.html",
+        top_domains=top_rows,
+        total_domains=db.session.query(func.count(func.distinct(DnsEvent.domain))).scalar() or 0,
+        total_events=DnsEvent.query.count(),
+        device_rows=(
+            db.session.query(DnsEvent.device_id, func.count(DnsEvent.id).label("hits"))
+            .group_by(DnsEvent.device_id).order_by(func.count(DnsEvent.id).desc())
+            .limit(15).all()
+        ),
     )
-    return render_template("network.html", top_domains=top_rows,
-                          total_domains=total_domains, total_events=total_events,
-                          device_rows=device_rows)
 
 
 # ============================================================
@@ -626,12 +728,9 @@ def upload():
         q = q.filter(~UploadedFile.uploaded_by.like("api:%"))
 
     files = q.order_by(UploadedFile.uploaded_at.desc()).limit(200).all()
-
     total_count = UploadedFile.query.count()
     device_count = UploadedFile.query.filter(UploadedFile.uploaded_by.like("api:%")).count()
-    manual_count = total_count - device_count
 
-    # Обогащаем каждую запись источником: устройство или admin
     device_cache = {}
     rows = []
     for f in files:
@@ -654,8 +753,9 @@ def upload():
         active_source=source,
         total_count=total_count,
         device_count=device_count,
-        manual_count=manual_count,
+        manual_count=total_count - device_count,
     )
+
 
 @app.route("/upload/<upload_id>")
 @login_required
@@ -671,8 +771,7 @@ def download_uploaded(upload_id):
     record = UploadedFile.query.filter_by(upload_id=upload_id).first_or_404()
     if not record.stored_path or not os.path.exists(record.stored_path):
         abort(404)
-    return send_file(record.stored_path, as_attachment=True,
-                     download_name=record.original_name)
+    return send_file(record.stored_path, as_attachment=True, download_name=record.original_name)
 
 
 @app.route("/upload/<upload_id>/delete", methods=["POST"])
@@ -691,7 +790,7 @@ def delete_uploaded(upload_id):
 
 
 # ============================================================
-#  Внутренняя обработка
+#  Внутренняя обработка файла
 # ============================================================
 def _process_uploaded_file(file, uploaded_by: str, relative_path: str = "") -> UploadedFile:
     upload_id = str(uuid.uuid4())
@@ -746,10 +845,18 @@ def too_large(_e):
 
 
 # ============================================================
-#  Init
+#  CSRF: освобождаем все /api/v1/* от CSRF-токена.
+#  Клиент (Retrofit) не отправляет CSRF — использует Bearer.
+#  Размещено здесь (а не в create_app), потому что app = create_app()
+#  вызывается ДО определения api_register/api_scan/... — в create_app()
+#  на момент вызова их ещё нет в namespace. Здесь все они уже определены.
 # ============================================================
-with app.app_context():
-    db.create_all()
+csrf.exempt(api_register)
+csrf.exempt(api_scan)
+csrf.exempt(api_sync_folders)
+csrf.exempt(api_sync_files)
+csrf.exempt(api_sync_pending)
+csrf.exempt(api_upload)
 
 
 if __name__ == "__main__":

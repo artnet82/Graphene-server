@@ -1,0 +1,557 @@
+# 📘 GRAPHENE ANTIVIRYS ADMIN  — Архитектура сервиса
+
+**Версия:** 1.3 · **Назначение документа:** онбординг AI-модели / нового разработчика, база для code review.
+
+---
+
+## 1. Что это за система
+
+**GRAPHENE ANTIVIRYS ADMIN ** — клиент-серверная система поведенческого антивируса для Android в лабораторном режиме. Состоит из двух приложений:
+
+| Компонент | Язык / стек | Роль |
+|-----------|-------------|------|
+| **Graphene-server** | Python 3.10 + Flask + SQLAlchemy + SQLite | Принимает телеметрию, анализирует файлы, хранит запросы, отдаёт веб-панель админу |
+| **Graphene-client** | Kotlin + Jetpack Compose + WorkManager + Retrofit | Собирает данные с устройства, показывает статус, сканирует разрешённые папки, отправляет файлы по запросу |
+
+**Ключевая идея:** клиент видит всё на телефоне, но на сервер отправляет только **метаданные и разрешённые пользователем папки**. Содержимое файлов передаётся только по явному запросу администратора (`FileRequest`). Это лабораторный сценарий, поэтому в UI клиента прямо сказано «Режим лаборатории».
+
+---
+
+## 2. Компонентная диаграмма (высокоуровневая)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          ANDROID CLIENT                                   │
+│                                                                           │
+│  ┌─────────────────┐    ┌──────────────────┐    ┌────────────────────┐  │
+│  │  UI Compose     │───▶│   MainViewModel  │───▶│  Data Layer        │  │
+│  │  Dashboard      │    │                  │    │  ConsentStore      │  │
+│  │  Scan           │    │                  │    │  SyncFolderStore   │  │
+│  │  SyncSetup      │    │                  │    │  ApiClient         │  │
+│  │  Sync           │    │                  │    │  SyncRepository    │  │
+│  └─────────────────┘    └──────────────────┘    └────────────────────┘  │
+│                                                        │                  │
+│  ┌─────────────────────┐    ┌────────────────────┐    │                  │
+│  │  TelemetryWorker    │───▶│  TelemetryCollector│───▶│  HTTP via Retrofit│
+│  │  (каждые 15 мин)    │    │  (apps/contacts/…) │    │                  │
+│  └─────────────────────┘    └────────────────────┘    │                  │
+│                                                        │                  │
+│  ┌─────────────────────┐    ┌────────────────────┐    │                  │
+│  │  SyncWorker         │───▶│  FolderScanner     │───▶│                  │
+│  │  (каждые 30 мин)    │    │  (SAF tree walker) │    │                  │
+│  └─────────────────────┘    └────────────────────┘    │                  │
+└───────────────────────────────────────────────────────┼──────────────────┘
+                                                         │ HTTPS / LAN
+                                                         │
+┌────────────────────────────────────────────────────────▼──────────────────┐
+│                          FLASK SERVER                                      │
+│                                                                            │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ app.py — единая точка входа                                       │   │
+│   │   • routes: /, /devices, /devices/<id>, /upload, /requests, …     │   │
+│   │   • api: /api/v1/scan, /api/v1/upload, /api/v1/sync/*             │   │
+│   │   • auth: /login, /logout через flask_login                       │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+│               │                          │                                │
+│               ▼                          ▼                                │
+│   ┌────────────────────┐     ┌──────────────────────────┐                │
+│   │  models.py         │     │  analyzer.py             │                │
+│   │  SQLAlchemy models │     │  analyze(data)           │                │
+│   │  Device, App, …    │     │  analyze_file(path, name)│                │
+│   └─────────┬──────────┘     └──────────────────────────┘                │
+│             │                                                             │
+│             ▼                                                             │
+│   ┌────────────────────┐     ┌──────────────────────────┐                │
+│   │  graphene.db       │     │  instance/uploads/       │                │
+│   │  (SQLite)          │     │  <sha[:2]>/<sha[2:4]>/   │                │
+│   │                    │     │    <sha>.bin             │                │
+│   └────────────────────┘     └──────────────────────────┘                │
+│                                                                            │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │ templates/  Jinja2 — login, dashboard, devices, device_detail,    │   │
+│   │             requests, threats, network, upload, uploaded_detail  │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Три главных потока данных
+
+### 3.1. Телеметрия (клиент → сервер, регулярная)
+
+```
+TelemetryWorker (каждые 15 мин)
+  → TelemetryCollector.collect()
+    → apps / contacts / sms / calls / files / dns_events
+  → POST /api/v1/scan { device, apps[], contacts[], … }
+    → Device.upsert
+    → DELETE старых AppRecord/Contact/SmsRecord/… для device_id
+    → INSERT новых записей
+    → analyze(data) → threats[], risk_score
+    → INSERT Threat + ScanSession
+    → device.last_risk_score = risk_score
+  ← { scan_id, threats[], risk_score }
+```
+
+**Важно:** каждое сканирование **полностью заменяет** коллекции `AppRecord / Contact / SmsRecord / CallRecord / ScannedFile / DnsEvent / Threat` для данного `device_id`. Это `delete-then-insert` в рамках одной транзакции. `Device` — upsert.
+
+### 3.2. Синхронизация папок (клиент → сервер, регулярная)
+
+```
+SyncWorker (каждые 30 мин) или кнопка «Синхронизировать» в UI
+  → SyncFolderStore.getFolders()  (список SAF-tree-URI)
+  → POST /api/v1/sync/folders  (регистрация папок)
+    → SyncedFolder: удаляются отсутствующие, добавляются новые
+  → FolderScanner.scanAll(folders)
+    → ContentResolver обход дерева DocumentsContract
+    → для каждого файла: name, size, mtime, mime, sha256
+  → POST /api/v1/sync/files
+    → SyncedFile: DELETE все для device_id → INSERT заново
+  → GET /api/v1/sync/pending?device_id=...
+    → FileRequest(status='pending')[:20]
+  → для каждого pending-запроса:
+    → найти SyncedFile по relative_path
+    → openInputStream(docUri) → temp file
+    → POST /api/v1/upload (multipart)
+      → _process_uploaded_file() → analyze_file() → UploadedFile
+      → FileRequest.status = 'sent', upload_id = …
+      → SyncedFile.upload_id = …
+```
+
+### 3.3. Ручной запрос файла (админ в UI, однократный)
+
+```
+/devices/<id>  → таблица synced_files
+  → клик «Скачать» на файле
+  → POST /devices/<id>/request-file  { relative_path }
+    → проверка SyncedFile существует
+    → проверка: нет ли уже pending для этого пути
+    → INSERT FileRequest(status='pending', created_by=admin)
+  ← redirect /devices/<id>  (файл теперь «в очереди»)
+
+  (дальше — клиент заберёт при следующей синхронизации, см. 3.2)
+```
+
+---
+
+## 4. Структура файлов — сервер
+
+```
+Graphene-server/
+├── app.py                    ★ точка входа, все роуты, auth, обработка файлов
+├── models.py                 ★ все SQLAlchemy-модели
+├── analyzer.py               ★ анализ телеметрии + файлов
+├── seed.py                   наполнение БД фейковыми данными
+├── config.py (опц.)          можно вынести Config из app.py
+├── graphene.db               SQLite (создаётся автоматически)
+├── instance/
+│   └── uploads/
+│       ├── tmp/              временное хранилище при загрузке
+│       └── <sha[:2]>/<sha[2:4]>/<sha>.bin   дедуплицированные файлы
+├── static/
+│   └── css/graphene.css      единственный CSS
+└── templates/
+    ├── base.html             ★ каркас: nav, flash, container
+    ├── login.html
+    ├── dashboard.html        обзор: счётчики, последние угрозы
+    ├── devices.html          таблица устройств со счётчиками
+    ├── device_detail.html    ★ основная рабочая страница: папки, файлы, запросы
+    ├── requests.html         журнал всех FileRequest
+    ├── threats.html          список угроз с фильтром severity
+    ├── network.html          топ доменов
+    ├── upload.html           табы «Все / С устройства / Ручные»
+    └── uploaded_detail.html  карточка файла: метаданные + детекции
+```
+
+★ — файлы, которые чаще всего правятся.
+
+---
+
+## 5. Структура файлов — клиент
+
+```
+app/src/main/java/com/graphene/antivirus/
+├── GrapheneApp.kt                   Application, регистрация WorkManager
+├── MainActivity.kt                  ★ Compose NavHost, точки входа
+│
+├── data/
+│   ├── DataStoreProvider.kt         Context.dataStore (общий на всё приложение)
+│   ├── ConsentStore.kt              consent, device_id, sync_enabled
+│   ├── SyncFolderStore.kt           список SyncFolder (Gson → JSON в DataStore)
+│   ├── ApiClient.kt                 Retrofit + OkHttp
+│   ├── GrapheneApi.kt               интерфейс API
+│   ├── Models.kt                    все DTO (@SerializedName)
+│   └── SyncRepository.kt            ★ оркестратор синхронизации
+│
+├── scanner/
+│   ├── TelemetryCollector.kt        сбор apps/contacts/sms/calls/dns
+│   ├── DnsCollector.kt              перехват DNS через локальный VPN
+│   ├── FolderScanner.kt             SAF tree walker + SHA-256
+│   └── SignatureHelper.kt           SHA-256 для APK
+│
+├── worker/
+│   ├── TelemetryWorker.kt           PeriodicWork 15 мин
+│   └── SyncWorker.kt                PeriodicWork 30 мин
+│
+├── ui/
+│   ├── screens/
+│   │   ├── ConsentScreen.kt
+│   │   ├── DashboardScreen.kt
+│   │   ├── ScanScreen.kt
+│   │   ├── PermissionsScreen.kt
+│   │   ├── SettingsScreen.kt
+│   │   ├── SyncSetupScreen.kt       ★ настройка разрешённых папок
+│   │   └── SyncScreen.kt            ★ «Синхронизировать сейчас»
+│   ├── components/                  GrapheneCard, PrimaryButton, ScannerOrb, …
+│   └── theme/                       GrapheneBlack, GrapheneAccent, …
+│
+└── viewmodel/
+    └── MainViewModel.kt             состояние consent, VPN, scan
+```
+
+---
+
+## 6. Модели данных — сервер
+
+### 6.1. Схема связей
+
+```
+Device (device_id) ──┬──< AppRecord
+                     ├──< Contact
+                     ├──< SmsRecord
+                     ├──< CallRecord
+                     ├──< ScannedFile       (файлы, найденные в /Download и т.п.)
+                     ├──< DnsEvent
+                     ├──< Threat
+                     ├──< ScanSession       (история проверок)
+                     ├──< SyncedFolder ──< SyncedFile
+                     └──< FileRequest       (запрос админа на файл)
+
+UploadedFile ── независимая таблица
+   uploaded_by = "api:<device_id>"  → пришёл с устройства через FileRequest
+   uploaded_by = "<admin_username>" → загружен вручную через /upload
+   upload_id уникален, хранится в FileRequest.upload_id и SyncedFile.upload_id
+```
+
+### 6.2. Таблицы — полное описание
+
+| Таблица | PK | Ключевые поля | Зачем |
+|---------|-----|---------------|-------|
+| **devices** | `id`, UNIQUE `device_id` | manufacturer, model, android_version, sdk_int, rooted, last_risk_score, last_seen | Профиль устройства. Upsert по `device_id`. |
+| **scan_sessions** | `id` | device_id, scan_id, scanned_apps, risk_score, threats_count | История проверок — для страницы «История» |
+| **apps** | `id` | device_id, package_name, app_name, permissions (JSON-строка), target_sdk, is_sideloaded | Установленные приложения. Полностью пересоздаётся на каждый `/api/v1/scan`. |
+| **contacts / sms / calls** | `id` | device_id, display_name/address/number, … | PII, полная замена при каждом скане. |
+| **files** | `id` | device_id, path, size, extension, sha256 | Файлы из стандартных директорий (жёстко зашитый `/Download`). **НЕ связано с SyncedFile!** |
+| **dns_events** | `id` | device_id, domain, timestamp, query_type | Перехваченные DNS-запросы, дедуплицируются при вставке. |
+| **threats** | `id` | device_id, scan_id, package_name, threat_name, severity, description | Найденные угрозы приложения (по разрешениям / target_sdk / sideloaded). |
+| **synced_folders** | `id`, UNIQUE(`device_id`, `folder_uri`) | device_id, folder_uri (SAF tree), display_name, last_scan | Папки, которые пользователь разрешил. |
+| **synced_files** | `id` | device_id, folder_id → synced_folders, relative_path, name, size, sha256, mime, upload_id | Индекс метаданных файлов в разрешённых папках. DELETE + INSERT на каждый `/api/v1/sync/files`. |
+| **file_requests** | `id`, UNIQUE `request_id` | device_id, relative_path, status (pending/sent/rejected/expired), created_by, fulfilled_at, upload_id | Очередь запросов админа на файлы. |
+| **uploaded_files** | `id`, UNIQUE `upload_id` | original_name, relative_path (может быть None для ручных), sha256, size, file_type, severity, risk_score, detections (JSON), stored_path, uploaded_by, uploaded_at | Все файлы, прошедшие `analyze_file`, с результатами детекций. |
+
+### 6.3. Различие `files` vs `synced_files`
+
+| | `files` (ScannedFile) | `synced_files` (SyncedFile) |
+|---|---|---|
+| Источник | Автоматически из `TelemetryCollector` | Только из пользовательских папок после SAF |
+| Видно в UI | На `/devices/<id>` в разделе DNS — не показывается отдельно | На `/devices/<id>` — главная таблица с кнопкой «Скачать» |
+| Можно запросить | Нет | Да (создаётся `FileRequest`) |
+| Связь с `UploadedFile` | Нет | `upload_id` после получения |
+
+**Не путать:** `files` — просто наблюдаемые файлы (телеметрия), `synced_files` — то, что реально можно запросить.
+
+---
+
+## 7. API — все эндпоинты
+
+### 7.1. Публичные (без авторизации)
+
+| Метод | Путь | Body | Response |
+|-------|------|------|----------|
+| GET | `/api/v1/ping` | — | `{status:"ok"}` |
+| POST | `/api/v1/scan` | `ScanRequest` (см. Models.kt) | `ScanResponse` |
+| POST | `/api/v1/sync/folders` | `SyncFoldersRequest` | `{ok, count}` |
+| POST | `/api/v1/sync/files` | `SyncFilesRequest` | `{ok, count}` |
+| GET | `/api/v1/sync/pending?device_id=X` | — | `{requests:[{request_id, relative_path, file_name}]}` |
+| POST | `/api/v1/upload` (multipart) | `device_id, request_id?, relative_path?, file` | `UploadFileResponse` |
+
+Авторизация отсутствует: клиент идентифицируется по `device_id` (UUID, сгенерированный при первом запуске, хранится в DataStore). В лабораторных условиях это приемлемо; в проде нужен токен.
+
+### 7.2. Админские (login_required)
+
+| Метод | Путь | Назначение |
+|-------|------|-----------|
+| GET/POST | `/login`, `/logout` | Аутентификация (единственный пользователь из env) |
+| GET | `/` | Dashboard |
+| GET | `/devices` | Список устройств |
+| GET | `/devices/<device_id>` | Карточка устройства |
+| POST | `/devices/<device_id>/request-file` | Создать `FileRequest` |
+| POST | `/devices/<device_id>/request/<request_id>/cancel` | Отменить pending |
+| GET | `/requests` | Все запросы |
+| GET | `/threats?severity=HIGH` | Угрозы с фильтром |
+| GET | `/network` | DNS-аналитика |
+| GET/POST | `/upload` | История / ручная загрузка |
+| GET | `/upload/<upload_id>` | Карточка файла |
+| GET | `/upload/<upload_id>/download` | Скачать оригинал |
+| POST | `/upload/<upload_id>/delete` | Удалить файл + запись |
+
+### 7.3. Аутентификация
+
+- Один администратор. Логин — `GRAPHENE_ADMIN_USER` (default `admin`).
+- Пароль — `werkzeug.security.generate_password_hash` → хранится в `GRAPHENE_ADMIN_HASH` env, либо дефолт `graphene2024` (только для дева).
+- `LoginManager` + `UserMixin`-обёртка `AdminUser`. Сессия — Flask session-cookie.
+- `@login_required` на всех админских роутах.
+- API-роуты **не защищены** — предполагается LAN-развёртывание или VPN.
+
+---
+
+## 8. Анализатор (`analyzer.py`)
+
+### 8.1. `analyze(data) → (threats, risk_score)`
+
+Вход — JSON от `/api/v1/scan`. Логика:
+
+- Для каждого приложения смотрятся permissions по словарю `DANGEROUS_PERMISSIONS`:
+  - `SEND_SMS` / `RECEIVE_SMS` / `SYSTEM_ALERT_WINDOW` / `REQUEST_INSTALL_PACKAGES` / `BIND_ACCESSIBILITY_SERVICE` → HIGH, +25
+  - `READ_SMS` / `CALL_PHONE` / `CAMERA` / `RECORD_AUDIO` / `ACCESS_FINE_LOCATION` → MEDIUM, +10
+  - `READ_CONTACTS` / `READ_PHONE_STATE` / `PACKAGE_USAGE_STATS` → LOW, +3
+- Если `is_sideloaded = true` — вес ×1.5, MEDIUM → HIGH.
+- `target_sdk < 23` — отдельная LOW-угроза, +3.
+- Итог: `min(risk, 100)`.
+
+### 8.2. `analyze_file(path, filename) → dict`
+
+Возвращает `{sha256, size, file_type, severity, risk_score, detections[]}`.
+
+`_detect_type()` — по магии байтов, **не по расширению**:
+
+| Сигнатура | file_type | Что дальше |
+|-----------|-----------|-----------|
+| `PK\x03\x04` + `AndroidManifest.xml` + `.dex` | `apk` | `_analyze_apk` |
+| `PK\x03\x04` + `META-INF/MANIFEST.MF` | `jar` | `_analyze_generic` |
+| `PK\x03\x04` + `word/` / `xl/` | `docx` / `xlsx` | `_analyze_generic` |
+| `PK\x03\x04` (прочее) | `zip` | `_analyze_zip` |
+| `%PDF` | `pdf` | `_analyze_pdf` |
+| `MZ` | `pe` | `_analyze_binary` |
+| `\x7fELF` | `elf` | `_analyze_binary` |
+| `dex\n` | `dex` | `_analyze_binary` |
+| `\xd0\xcf\x11\xe0` | `ole` | `_analyze_generic` |
+| иначе | по расширению | `_analyze_generic` |
+
+Severity: `risk ≥ 70 → HIGH`, `≥ 40 → MEDIUM`, `≥ 15 → LOW`, иначе `CLEAN`.
+
+**Важно:** файл анализируется **до** сохранения в `instance/uploads` (сначала `tmp`, потом dedup-путь по SHA-256).
+
+---
+
+## 9. CSS и UI-конвенции
+
+`static/css/graphene.css` — единый файл.
+
+**CSS-переменные** (в `:root`):
+```
+--bg, --surface, --surface-2, --border
+--text, --muted, --dim
+--accent (зелёный #6ee7b7), --accent-d (тёмно-зелёный)
+--danger (красный #ff5c5c), --warn (жёлтый #ffb84d)
+--radius
+--text-primary/-secondary/-tertiary (алиасы для совместимости)
+```
+
+**Классы, которые точно есть** и на которые можно опираться в шаблонах:
+
+| Класс | Где использовать |
+|-------|------------------|
+| `.container` | обёртка страницы |
+| `.page-head` + `h1` + `p` | заголовок страницы |
+| `.grid` + `.stat` + `.stat-label` + `.stat-value` | 4 плитки сверху |
+| `.cols` | 2-колоночная раскладка |
+| `.card` + `.card-head` + `h2` | карточки |
+| `.list` / `.list.compact` | простые списки `li` |
+| `.table` / `.table.compact` | таблицы |
+| `.sev` + `.sev-high/medium/low/clean` | бейджи severity |
+| `.chip` + `.chip.active` | фильтры / теги |
+| `.hint-box` | подсказка над таблицей |
+| `.upload-btn` / `.subtle-danger-btn` | кнопки |
+| `.upload-form` / `.upload-input` | форма загрузки |
+| `.source-tabs` / `.source-tab` / `.count` | табы на `/upload` |
+| `.upload-details` | `<details>` для ручной формы |
+| `.header-meta` / `.action-row` / `.filter-row` | вспомогательные раскладки |
+| `.link` / `.muted` / `.mono` / `.small` / `.danger` / `.ellipsis` / `.grow` | утилиты |
+
+**Красные флаги в шаблонах:**
+- `var(--text-primary)` и `var(--text-secondary)` **работают только благодаря алиасам** в `:root`.
+- `{{ record.… }}` — только в `uploaded_detail.html`. В `device_detail.html` переменной `record` нет. Перепутать легко — именно этот баг уже случился.
+- `{{ device.… }}` — только в `device_detail.html`.
+
+**Jinja-фильтры, зарегистрированные в `app.py`:**
+
+| Фильтр | Использование |
+|--------|--------------|
+| `fromjson` | `{{ c.phones|fromjson }}` → list |
+| `dt` | `{{ r.created_at|dt }}` → `%Y-%m-%d %H:%M` |
+| `filesize` | `{{ f.size|filesize }}` → `1.5 MB` |
+
+---
+
+## 10. Клиент — ключевые контракты
+
+### 10.1. DataStore (единый на приложение)
+
+```
+Context.dataStore = preferencesDataStore("graphene_prefs")
+  ├── consent_granted: Boolean
+  ├── device_id: String (UUID, генерируется один раз)
+  ├── sync_enabled: Boolean
+  └── sync_folders_json: String (JSON от Gson: List<SyncFolder>)
+```
+
+Доступ **только** через `ConsentStore` и `SyncFolderStore`. Не открывать `dataStore.edit {}` напрямую из UI — иначе гонки.
+
+### 10.2. DTO ↔ JSON ↔ БД — цепочка соответствий
+
+| Kotlin DTO | JSON | Серверная модель | Комментарий |
+|-----------|------|------------------|-------------|
+| `DeviceInfo.deviceId` | `device_id` | `Device.device_id` | PK, UUID |
+| `SyncFolderPayload.uri` | `uri` | `SyncedFolder.folder_uri` | SAF-tree URI |
+| `SyncedFilePayload.relativePath` | `relative_path` | `SyncedFile.relative_path` | Один и тот же путь во всех запросах |
+| `PendingRequest.requestId` | `request_id` | `FileRequest.request_id` | Используется при `/api/v1/upload` |
+
+**Правило:** `relative_path` — это **единственный ключ**, связывающий клиентский файл с серверной записью. Если он меняется между `sync/files` и `upload`, сервер не найдёт строку и `SyncedFile.upload_id` останется `None`.
+
+### 10.3. Порядок вызовов в `SyncRepository.syncAll`
+
+1. `registerFolders` — всегда, даже если папок 0
+2. `FolderScanner.scanAll` — локально
+3. `uploadFileList` — метаданные всех файлов
+4. `getPendingRequests` — **после** (3), чтобы `relative_path` уже был в БД на сервере
+5. Для каждого pending — `uploadFile` (multipart) — может быть до 20 файлов за раз
+
+Ошибки на каждом шаге проглатываются (`try/catch`), синхронизация продолжается. Итог — `SyncResult(folders, filesIndexed, filesSent, error?)` → показывается на `SyncScreen`.
+
+---
+
+## 11. Безопасность и модель угроз
+
+| Аспект | Сейчас | Замечание для code review |
+|--------|--------|---------------------------|
+| API auth | ❌ нет | В лаборатории допустимо. В проде — HMAC/токен по `device_id` |
+| Admin auth | ✅ flask_login, один пользователь | Пароль хранится хешем, env override |
+| Транспорт | HTTP (LAN) | В проде — HTTPS или VPN |
+| Path traversal на upload | ✅ защищён — клиент ищет файл по `relative_path` в своей карте `SyncedFile`, не по пользовательскому вводу | Но `/devices/<id>/request-file` принимает `relative_path` из формы — проверить, что `SyncedFile` существует (уже делается) |
+| SQL injection | ✅ SQLAlchemy ORM | Ок |
+| XSS | ⚠️ нет `|e` в шаблонах, но Jinja автоэскейпит по умолчанию | Проверить, нет ли `|safe` |
+| CSRF | ❌ нет Flask-WTF | Формы POST не защищены. Для LAN ок, в проде добавить |
+| File upload size | ✅ `MAX_CONTENT_LENGTH = 110MB`, плюс проверка в `_process_uploaded_file` на 100MB | Ок |
+| Dedup | ✅ по SHA-256 (same file — same path) | Ок |
+
+---
+
+## 12. Известные ловушки и конвенции
+
+1. **Два `files`-поля:** `ScannedFile` (телеметрия) ≠ `SyncedFile` (SAF). Не смешивать.
+2. **`UploadedFile.uploaded_by`** — это префикс-тег:
+   - `api:<device_id>` — пришёл от устройства;
+   - что-то другое — ручная загрузка.
+   Фильтрация в UI — `UploadedFile.uploaded_by.like('api:%')` vs `NOT LIKE`.
+3. **`Device.last_risk_score`** обновляется при сканировании, **не при загрузке файлов**.
+4. **`FileRequest.status`:** `pending` → `sent` (успех) / `rejected` (отмена). `expired` зарезервирован, но не используется.
+5. **Ping-pong `relative_path`:** при создании `FileRequest` — из `SyncedFile.relative_path`; при загрузке — из `SyncedFilePayload.relative_path`. Должны совпадать **побайтово**, включая кириллицу и пробелы.
+6. **`seed.py` без `--add` удаляет БД** — включая `UploadedFile` (но не файлы на диске). Используйте `--reset-files` для чистоты.
+7. **`templates/` никогда не должны перепутаться:**
+   - `device_detail.html` — только `device`, `folders`, `synced_files`, `pending_by_path`, `last_sent_by_path`, `device_requests`, `threats`, `scans`, `apps`, `contacts`, `sms`, `calls`, `dns`.
+   - `uploaded_detail.html` — только `record`, `detections`.
+   Если видите `{{ record.… }}` в `device_detail.html` — это ошибка.
+8. **`_process_uploaded_file` возвращает запись без `commit`** — `commit` делает роут. Не вызывать `db.session.commit()` внутри.
+9. **`analyze_file` требует существующий файл** — не работает с `BytesIO`, поэтому `seed.py` и `_process_uploaded_file` сначала сохраняют на диск (tmp), потом анализируют.
+10. **`FolderScanner` ограничения:** max 50 MB/файл, max 3000 файлов, max глубина 15, SHA-256 по потоку (64 KB чанки). Если на телефоне лежит 50 GB данных в `Download`, будет очень медленно — это осознанный компромисс.
+
+---
+
+## 13. Как читать код — практические ориентиры
+
+### Хочу добавить поле в `SyncedFile`
+
+1. `models.py` — добавить колонку.
+2. `analyzer.py` — если поле участвует в анализе — сюда.
+3. `app.py` → `api_sync_files` — сохранять новое поле из `SyncedFilePayload`.
+4. `Models.kt` → `SyncedFilePayload` — добавить `@SerializedName`.
+5. `FolderScanner.kt` → `SyncedFileMeta` — собирать новое поле.
+6. `SyncRepository.kt` → `syncAll` — прокинуть из `SyncedFileMeta` в `SyncedFilePayload`.
+7. `device_detail.html` — показать колонку.
+8. `seed.py` — обновить генерацию.
+
+### Хочу новый тип файла в анализаторе
+
+1. `analyzer.py` → `_detect_type` — добавить сигнатуру.
+2. `analyzer.py` → новая `_analyze_XXX(path)`.
+3. `analyzer.py` → `analyze_file` — ветка `elif ftype == "XXX":`.
+4. `seed.py` → `_make_bytes` / `kind_for_filename` — добавить генератор для тестов.
+
+### Хочу защитить API токеном
+
+1. `app.py` → декоратор `@device_token_required` (или Flask-JWT).
+2. `app.py` → все `/api/v1/*` обернуть.
+3. `ConsentStore` → хранить токен рядом с `device_id`.
+4. `ApiClient` → добавить `OkHttpClient.addInterceptor` с `Authorization: Bearer <token>`.
+
+---
+
+## 14. Что считается «правильным» в code review
+
+| ✅ Приемлемо | ❌ Требует правки |
+|-------------|-------------------|
+| `try/except` в `SyncRepository` глушит сетевые ошибки и продолжает | `try/except: pass` в `analyzer.py` |
+| `/api/v1/*` без auth (лаборатория) | Хардкод пароля в `app.py` (только env) |
+| `delete-then-insert` в телеметрии | Использование `synced_files` в `/api/v1/scan` (это разные модели) |
+| `relative_path` как primary key клиент-сервер | Обращение к файлу по `path` вместо `relative_path` в `/api/v1/upload` |
+| Jinja-автоэскейп | `|safe` в пользовательских полях |
+| Один CSS на всё | Inline `style` в шаблонах (кроме 1–2 px-хаков — уже допущено) |
+| `.subtle-danger-btn` после `.upload-btn` | Менять порядок правил, ломая переопределение |
+| `logger.error` вместо `print` в продакшене | `print()` в `app.py` (сейчас частично) |
+
+---
+
+## 15. Версионирование и миграция схемы
+
+Сейчас **нет Alembic**. Правило — «сломали схему → `python3 seed.py --reset-files`».
+
+Для перехода на миграции:
+1. `pip install flask-migrate alembic`
+2. `migrate = Migrate(app, db)` после `db.init_app(app)`.
+3. `flask db init`, `flask db migrate -m "msg"`, `flask db upgrade`.
+4. `db.create_all()` в `with app.app_context()` — заменить на `flask db upgrade` в entrypoint.
+
+Пока миграций нет — при правке `models.py` обязательно пересоздать БД, иначе SQLAlchemy не увидит новую колонку (SQLite не поддерживает `ALTER TABLE` добавление NOT NULL без default).
+
+---
+
+## 16. Чек-лист перед коммитом
+
+- [ ] `python3 app.py` — сервер стартует без `ImportError` / `TemplateNotFound`
+- [ ] `/login` → `/` → `/devices` → `/devices/<id>` → `/upload` → `/upload/<id>` — 200 без 500
+- [ ] `head -2 templates/device_detail.html` → `device.model`, а не `record.original_name`
+- [ ] `head -2 templates/uploaded_detail.html` → `record.original_name`
+- [ ] `python3 seed.py --reset-files` — 10 устройств, ~40 файлов, все 3 статуса запросов
+- [ ] Кнопка «Скачать оригинал» на `/upload/<id>` отдаёт реальный файл
+- [ ] В консоли клиента `SyncRepository.syncAll` не падает с `NullPointerException` на пустой `folders`
+- [ ] CSS-переменные не содержат непереопределённых `--text-primary`, `--text-secondary` (или алиасы на месте)
+
+---
+
+## 17. Дорожная карта (что логично добавить следующим)
+
+| Приоритет | Задача | Куда смотреть |
+|-----------|--------|---------------|
+| 🔴 | HTTPS / токен на API | `app.py`, `ApiClient.kt` |
+| 🔴 | CSRF на админ-формы | `app.py`, `base.html` |
+| 🟡 | Alembic миграции | `app.py` entrypoint |
+| 🟡 | Push-уведомление при `FileRequest` (FCM или polling с 1-мин интервалом) | `SyncWorker.kt`, `/api/v1/sync/pending` |
+| 🟡 | `DELETE /api/v1/sync/files` для удалённых папок (сейчас делается через полную замену) | `app.py`, `SyncRepository.kt` |
+| 🟢 | Экспорт `UploadedFile.detections` в PDF-отчёт | новый роут `/upload/<id>/report` |
+| 🟢 | `SystemAlertWindow`-детектор в `analyzer.py` — проверка не только по `permissions` приложения, но и по факту наличия `Overlay` service в system dump | `analyzer.py::analyze` |
+
+---
+
+Этот документ — **живой**. При любом существенном изменении схемы/API/UI обновляйте соответствующий раздел, чтобы AI-модель при следующем code review не догадывалась, а опиралась на актуальные контракты.

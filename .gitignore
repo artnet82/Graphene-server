@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Flask
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# Env / secrets
+.env
+.flaskenv
+config_local.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

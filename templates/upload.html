@@ -9,9 +9,6 @@
   </p>
 </header>
 
-<!-- ============================================================
-     Табы по источнику
-     ============================================================ -->
 <nav class="source-tabs">
   <a href="{{ url_for('upload', source='all', severity=active_severity) }}"
      class="source-tab {{ 'active' if active_source == 'all' }}">
@@ -27,9 +24,6 @@
   </a>
 </nav>
 
-<!-- ============================================================
-     Ручная загрузка — только в 'all' и 'manual'
-     ============================================================ -->
 {% if active_source in ('all', 'manual') %}
 <details class="upload-details" {% if active_source == 'manual' or manual_count == 0 %}open{% endif %}>
   <summary>
@@ -48,15 +42,13 @@
   </div>
 
   <form method="post" enctype="multipart/form-data" class="upload-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="file" name="file" required class="upload-input">
     <button type="submit" class="upload-btn">Загрузить и проанализировать</button>
   </form>
 </details>
 {% endif %}
 
-<!-- ============================================================
-     Фильтр по severity
-     ============================================================ -->
 <section class="card">
   <div class="card-head">
     <h2>История ({{ rows|length }} из {{ total_count }})</h2>
