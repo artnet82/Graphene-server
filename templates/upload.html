@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Файлы{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Файлы на анализ</h1>
+  <p class="muted">
+    Сюда попадают две категории файлов. Файлы с устройств приходят автоматически после запроса
+    в разделе «Устройства». Ручная загрузка — для образцов, которые у админа уже есть локально.
+  </p>
+</header>
+
+<!-- ============================================================
+     Табы по источнику
+     ============================================================ -->
+<nav class="source-tabs">
+  <a href="{{ url_for('upload', source='all', severity=active_severity) }}"
+     class="source-tab {{ 'active' if active_source == 'all' }}">
+    Все <span class="count">{{ total_count }}</span>
+  </a>
+  <a href="{{ url_for('upload', source='device', severity=active_severity) }}"
+     class="source-tab {{ 'active' if active_source == 'device' }}">
+    📱 С устройств <span class="count">{{ device_count }}</span>
+  </a>
+  <a href="{{ url_for('upload', source='manual', severity=active_severity) }}"
+     class="source-tab {{ 'active' if active_source == 'manual' }}">
+    🖥 Ручные <span class="count">{{ manual_count }}</span>
+  </a>
+</nav>
+
+<!-- ============================================================
+     Ручная загрузка — только в 'all' и 'manual'
+     ============================================================ -->
+{% if active_source in ('all', 'manual') %}
+<details class="upload-details" {% if active_source == 'manual' or manual_count == 0 %}open{% endif %}>
+  <summary>
+    <span class="details-icon">🖥</span>
+    Ручная проверка файла
+    <span class="muted small" style="font-weight:400;margin-left:8px">
+      (для образцов, которые у вас уже есть локально)
+    </span>
+  </summary>
+
+  <div class="hint-box">
+    Это <strong>отдельный</strong> сценарий — для файлов, которые вы получили по почте,
+    из внешнего отчёта или у вас на диске. Файлы с устройств сюда загружать не нужно:
+    они появляются здесь автоматически после того, как клиент заберёт ваш запрос
+    в <a class="link" href="{{ url_for('devices') }}">разделе «Устройства»</a>.
+  </div>
+
+  <form method="post" enctype="multipart/form-data" class="upload-form">
+    <input type="file" name="file" required class="upload-input">
+    <button type="submit" class="upload-btn">Загрузить и проанализировать</button>
+  </form>
+</details>
+{% endif %}
+
+<!-- ============================================================
+     Фильтр по severity
+     ============================================================ -->
+<section class="card">
+  <div class="card-head">
+    <h2>История ({{ rows|length }} из {{ total_count }})</h2>
+    <div class="filter-row">
+      <a href="{{ url_for('upload', source=active_source) }}"
+         class="chip {{ 'active' if not active_severity }}">Все</a>
+      <a href="{{ url_for('upload', source=active_source, severity='HIGH') }}"
+         class="chip sev-high {{ 'active' if active_severity == 'HIGH' }}">HIGH</a>
+      <a href="{{ url_for('upload', source=active_source, severity='MEDIUM') }}"
+         class="chip sev-medium {{ 'active' if active_severity == 'MEDIUM' }}">MEDIUM</a>
+      <a href="{{ url_for('upload', source=active_source, severity='LOW') }}"
+         class="chip sev-low {{ 'active' if active_severity == 'LOW' }}">LOW</a>
+      <a href="{{ url_for('upload', source=active_source, severity='CLEAN') }}"
+         class="chip sev-clean {{ 'active' if active_severity == 'CLEAN' }}">CLEAN</a>
+    </div>
+  </div>
+
+  {% if rows %}
+  <table class="table compact">
+    <thead>
+      <tr>
+        <th>Файл</th>
+        <th>Источник</th>
+        <th>Тип</th>
+        <th>Размер</th>
+        <th>Вердикт</th>
+        <th>Риск</th>
+        <th>Загружен</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for item in rows %}
+      {% set f = item.file %}
+      {% set src = item.source %}
+      <tr>
+        <td class="mono small ellipsis" style="max-width:260px" title="{{ f.original_name }}">
+          <a class="link" href="{{ url_for('uploaded_file_detail', upload_id=f.upload_id) }}">
+            {{ f.original_name }}
+          </a>
+          {% if f.relative_path %}
+            <div class="muted small mono ellipsis" title="{{ f.relative_path }}">{{ f.relative_path }}</div>
+          {% endif %}
+        </td>
+        <td class="small">
+          {% if src.kind == 'device' %}
+            <a class="link mono"
+               href="{{ url_for('device_detail', device_id=src.device_id) }}"
+               title="{{ src.device_id }}">
+              📱 {{ src.label }}
+            </a>
+          {% else %}
+            <span class="muted">🖥 {{ src.label }}</span>
+          {% endif %}
+        </td>
+        <td class="mono small">{{ f.file_type }}</td>
+        <td class="mono small">{{ f.size|filesize }}</td>
+        <td><span class="sev sev-{{ f.severity|lower }}">{{ f.severity }}</span></td>
+        <td class="mono small {{ 'danger' if f.risk_score >= 40 }}">{{ f.risk_score }}</td>
+        <td class="mono small">{{ f.uploaded_at|dt }}</td>
+        <td>
+          <a class="link small" href="{{ url_for('uploaded_file_detail', upload_id=f.upload_id) }}">
+            детали →
+          </a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    {% if active_source == 'device' %}
+      <p class="muted">
+        Файлов с устройств пока нет. Откройте устройство, выберите файл в разрешённых папках
+        и нажмите «Скачать» — файл придёт после следующей синхронизации клиента.
+      </p>
+    {% elif active_source == 'manual' %}
+      <p class="muted">
+        Ручных загрузок пока не было. Разверните форму выше, чтобы проверить образец.
+      </p>
+    {% else %}
+      <p class="muted">Пока ничего не загружено.</p>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

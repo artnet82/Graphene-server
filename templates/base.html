@@ -14,13 +14,15 @@
 <nav class="nav">
   <a class="brand" href="{{ url_for('dashboard') }}">
     <span class="brand-shield"></span>
-    <span>ГРАФЕН</span>
-    <small>ADMIN</small>
+    <span>GRAPHENE ADMIN ANTIVIRYS</span>
+    <small>GRAPHENE ADMIN ANTIVIRYS</small>
   </a>
   <div class="nav-links">
     <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}">Обзор</a>
     <a href="{{ url_for('devices') }}" class="{{ 'active' if request.endpoint in ['devices','device_detail'] }}">Устройства</a>
+    <a href="{{ url_for('requests_list') }}" class="{{ 'active' if request.endpoint == 'requests_list' }}">Запросы</a>
     <a href="{{ url_for('threats_list') }}" class="{{ 'active' if request.endpoint == 'threats_list' }}">Угрозы</a>
+    <a href="{{ url_for('upload') }}" class="{{ 'active' if request.endpoint in ['upload','uploaded_file_detail'] }}">Файлы</a>
     <a href="{{ url_for('network') }}" class="{{ 'active' if request.endpoint == 'network' }}">Сеть</a>
     <a class="logout" href="{{ url_for('logout') }}">Выход</a>
   </div>

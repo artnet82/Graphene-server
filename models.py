@@ -38,7 +38,7 @@ class AppRecord(db.Model):
     app_name = db.Column(db.String(255))
     version_name = db.Column(db.String(64))
     target_sdk = db.Column(db.Integer)
-    permissions = db.Column(db.Text)          # JSON string
+    permissions = db.Column(db.Text)
     first_install = db.Column(db.BigInteger)
     last_update = db.Column(db.BigInteger)
     apk_sha256 = db.Column(db.String(64))
@@ -51,8 +51,8 @@ class Contact(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     device_id = db.Column(db.String(64), index=True)
     display_name = db.Column(db.String(255))
-    phones = db.Column(db.Text)               # JSON
-    emails = db.Column(db.Text)               # JSON
+    phones = db.Column(db.Text)
+    emails = db.Column(db.Text)
     has_photo = db.Column(db.Boolean, default=False)
 
 
@@ -103,6 +103,70 @@ class Threat(db.Model):
     scan_id = db.Column(db.String(64))
     package_name = db.Column(db.String(255))
     threat_name = db.Column(db.String(255))
-    severity = db.Column(db.String(16))       # LOW / MEDIUM / HIGH
+    severity = db.Column(db.String(16))
     description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class UploadedFile(db.Model):
+    __tablename__ = "uploaded_files"
+    id = db.Column(db.Integer, primary_key=True)
+    upload_id = db.Column(db.String(64), unique=True, index=True)
+    original_name = db.Column(db.String(255))
+    relative_path = db.Column(db.Text)             # NEW — путь в папке клиента
+    sha256 = db.Column(db.String(64), index=True)
+    size = db.Column(db.BigInteger)
+    file_type = db.Column(db.String(32))
+    severity = db.Column(db.String(16))
+    risk_score = db.Column(db.Integer, default=0)
+    detections = db.Column(db.Text)
+    stored_path = db.Column(db.Text)
+    uploaded_by = db.Column(db.String(128))
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+# ============================================================
+#  Синхронизация папок (Вариант B)
+# ============================================================
+
+class SyncedFolder(db.Model):
+    __tablename__ = "synced_folders"
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), index=True)
+    folder_uri = db.Column(db.Text)                # content://tree/...
+    display_name = db.Column(db.String(255))
+    added_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_scan = db.Column(db.DateTime)
+    __table_args__ = (
+        db.UniqueConstraint("device_id", "folder_uri", name="uq_device_folder"),
+    )
+
+
+class SyncedFile(db.Model):
+    __tablename__ = "synced_files"
+    id = db.Column(db.Integer, primary_key=True)
+    device_id = db.Column(db.String(64), index=True)
+    folder_id = db.Column(db.Integer, db.ForeignKey("synced_folders.id"), index=True)
+    relative_path = db.Column(db.Text, index=True)
+    name = db.Column(db.String(255))
+    size = db.Column(db.BigInteger)
+    sha256 = db.Column(db.String(64), index=True)
+    modified = db.Column(db.BigInteger)
+    mime = db.Column(db.String(64))
+    last_seen = db.Column(db.DateTime, default=datetime.utcnow)
+    upload_id = db.Column(db.String(64))           # если файл уже скачан
+
+
+class FileRequest(db.Model):
+    __tablename__ = "file_requests"
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.String(64), unique=True, index=True)
+    device_id = db.Column(db.String(64), index=True)
+    relative_path = db.Column(db.Text)
+    file_name = db.Column(db.String(255))
+    status = db.Column(db.String(16), default="pending")  # pending/sent/rejected/expired
+    created_by = db.Column(db.String(128))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    fulfilled_at = db.Column(db.DateTime)
+    upload_id = db.Column(db.String(64))
+    note = db.Column(db.Text)

@@ -2,29 +2,80 @@
 {% block title %}Устройства{% endblock %}
 {% block content %}
 <header class="page-head">
-  <h1>Устройства</h1>
-  <p class="muted">Все устройства, отправлявшие телеметрию</p>
+  <h1>Устройства ({{ devices|length }})</h1>
+  <p class="muted">
+    Откройте устройство, чтобы увидеть файлы в разрешённых папках и запросить их.
+    Запрос выполнится при следующей синхронизации клиента.
+  </p>
 </header>
 
 {% if devices %}
 <table class="table">
   <thead>
-    <tr><th>Модель</th><th>Device ID</th><th>Android</th><th>Root</th><th>Риск</th><th>Последняя связь</th></tr>
+    <tr>
+      <th>Устройство</th>
+      <th>Android</th>
+      <th>Root</th>
+      <th>Риск</th>
+      <th>Папок</th>
+      <th>Файлов</th>
+      <th>В очереди</th>
+      <th>Получено</th>
+      <th>Последняя связь</th>
+      <th></th>
+    </tr>
   </thead>
   <tbody>
   {% for d in devices %}
     <tr>
-      <td><a href="{{ url_for('device_detail', device_id=d.device_id) }}">{{ d.manufacturer }} {{ d.model }}</a></td>
-      <td class="mono small">{{ d.device_id[:16] }}…</td>
-      <td>{{ d.android_version }} (SDK {{ d.sdk_int }})</td>
-      <td>{{ 'да' if d.rooted else '—' }}</td>
-      <td><span class="risk risk-{{ 'high' if d.last_risk_score>=30 else 'ok' }}">{{ d.last_risk_score }}</span></td>
+      <td>
+        <a class="link" href="{{ url_for('device_detail', device_id=d.device_id) }}">
+          {{ d.manufacturer }} {{ d.model }}
+        </a>
+        <div class="muted small mono ellipsis" style="max-width:260px" title="{{ d.device_id }}">
+          {{ d.device_id }}
+        </div>
+      </td>
+      <td class="mono small">{{ d.android_version }} / SDK {{ d.sdk_int }}</td>
+      <td>
+        {% if d.rooted %}
+          <span class="sev sev-high">да</span>
+        {% else %}
+          <span class="muted small">нет</span>
+        {% endif %}
+      </td>
+      <td class="mono small {{ 'danger' if d.last_risk_score >= 30 }}">
+        {{ d.last_risk_score }}
+      </td>
+      <td class="mono small">{{ folder_counts.get(d.device_id, 0) }}</td>
+      <td class="mono small">{{ file_counts.get(d.device_id, 0) }}</td>
+      <td>
+        {% set pc = pending_counts.get(d.device_id, 0) %}
+        {% if pc %}
+          <span class="sev sev-medium">{{ pc }}</span>
+        {% else %}
+          <span class="muted small">0</span>
+        {% endif %}
+      </td>
+      <td>
+        {% set sc = sent_counts.get(d.device_id, 0) %}
+        {% if sc %}
+          <span class="sev sev-low">{{ sc }}</span>
+        {% else %}
+          <span class="muted small">0</span>
+        {% endif %}
+      </td>
       <td class="mono small">{{ d.last_seen|dt }}</td>
+      <td>
+        <a class="link small" href="{{ url_for('device_detail', device_id=d.device_id) }}">
+          открыть →
+        </a>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 {% else %}
-<p class="muted">Устройств пока нет. Установите клиент Графен и подключитесь.</p>
+<p class="muted">Устройства ещё не подключались.</p>
 {% endif %}
 {% endblock %}

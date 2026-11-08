@@ -11,6 +11,11 @@
   --danger:    #ff5c5c;
   --warn:      #ffb84d;
   --radius:    16px;
+
+  /* Алиасы для новых компонентов (чтобы var(--text-primary) и др. работали) */
+  --text-primary:   var(--text);
+  --text-secondary: var(--muted);
+  --text-tertiary:  var(--dim);
 }
 
 * { box-sizing: border-box; }
@@ -25,6 +30,7 @@ body {
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { opacity: 0.85; }
+
 .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
@@ -33,7 +39,13 @@ a:hover { opacity: 0.85; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .grow { flex: 1; min-width: 0; }
 
-/* NAV */
+/* Базовый класс для <a class="link"> (раньше отсутствовал) */
+.link { color: var(--accent); text-decoration: none; }
+.link:hover { opacity: 0.85; }
+
+/* ============================================================
+   NAV
+   ============================================================ */
 .nav {
   position: sticky; top: 0; z-index: 10;
   display: flex; align-items: center; gap: 32px;
@@ -63,18 +75,22 @@ a:hover { opacity: 0.85; }
   font-size: 14px; font-weight: 500;
   transition: all 0.15s;
 }
-.nav-links a:hover { color: var(--text); background: var(--surface); }
+.nav-links a:hover { color: var(--text); background: var(--surface); opacity: 1; }
 .nav-links a.active { color: var(--accent); background: var(--surface); }
 .nav-links a.logout { color: var(--dim); }
 .nav-links a.logout:hover { color: var(--danger); }
 
-/* CONTAINER */
+/* ============================================================
+   CONTAINER
+   ============================================================ */
 .container { max-width: 1400px; margin: 0 auto; padding: 32px; }
 .login-wrap {
   min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 
-/* LOGIN */
+/* ============================================================
+   LOGIN
+   ============================================================ */
 .login-card {
   width: 100%; max-width: 380px;
   background: var(--surface);
@@ -122,12 +138,16 @@ a:hover { opacity: 0.85; }
 }
 .login-card .center { margin-top: 20px; margin-bottom: 0; }
 
-/* PAGE HEAD */
+/* ============================================================
+   PAGE HEAD
+   ============================================================ */
 .page-head { margin-bottom: 28px; }
 .page-head h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.5px; }
 .page-head p { margin: 0; font-size: 14px; }
 
-/* GRID */
+/* ============================================================
+   GRID / STAT
+   ============================================================ */
 .grid {
   display: grid; grid-template-columns: repeat(4, 1fr);
   gap: 16px; margin-bottom: 24px;
@@ -148,14 +168,18 @@ a:hover { opacity: 0.85; }
   color: var(--accent);
 }
 
-/* COLS */
+/* ============================================================
+   COLS
+   ============================================================ */
 .cols {
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 16px; margin-bottom: 24px;
 }
 @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
 
-/* CARD */
+/* ============================================================
+   CARD
+   ============================================================ */
 .card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 22px;
@@ -163,12 +187,16 @@ a:hover { opacity: 0.85; }
 }
 .card-head {
   display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
   margin-bottom: 16px;
 }
 .card-head h2 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: 0.3px; }
 .card-head .link { font-size: 12px; color: var(--dim); }
+.card-head .link:hover { color: var(--accent); }
 
-/* LIST */
+/* ============================================================
+   LIST
+   ============================================================ */
 .list { list-style: none; padding: 0; margin: 0; }
 .list li {
   display: flex; align-items: center; gap: 12px;
@@ -177,7 +205,9 @@ a:hover { opacity: 0.85; }
 .list li:last-child { border-bottom: none; }
 .list.compact li { padding: 8px 0; }
 
-/* TABLE */
+/* ============================================================
+   TABLE
+   ============================================================ */
 .table {
   width: 100%; border-collapse: collapse;
   background: var(--surface); border: 1px solid var(--border);
@@ -196,57 +226,218 @@ a:hover { opacity: 0.85; }
 }
 .table.compact td, .table.compact th { padding: 8px 12px; font-size: 12px; }
 
-/* SEVERITY */
+/* ============================================================
+   SEVERITY BADGES (добавлен sev-clean)
+   ============================================================ */
 .sev {
   display: inline-block; padding: 2px 8px;
   border-radius: 6px; font-size: 10px; font-weight: 700;
-  letter-spacing: 1px;
+  letter-spacing: 1px; text-transform: uppercase;
 }
 .sev-high   { background: rgba(255,92,92,0.15);  color: var(--danger); }
 .sev-medium { background: rgba(255,184,77,0.15); color: var(--warn); }
 .sev-low    { background: rgba(140,140,150,0.15); color: var(--muted); }
+.sev-clean  { background: rgba(110,231,183,0.15); color: var(--accent); }
 
-/* RISK BADGE */
+/* ============================================================
+   RISK BADGE
+   ============================================================ */
 .risk {
   display: inline-block; min-width: 36px; text-align: center;
-  padding: 4px 8px; border-radius: 8px; font-family: "JetBrains Mono", monospace;
+  padding: 4px 8px; border-radius: 8px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 12px; font-weight: 700;
 }
 .risk-ok   { background: var(--accent-d); color: var(--accent); }
 .risk-high { background: rgba(255,92,92,0.15); color: var(--danger); }
 
-/* CHIP */
+/* ============================================================
+   CHIP — ОДНО определение (было продублировано и конфликтовало)
+   ============================================================ */
 .chip {
-  display: inline-block; padding: 2px 8px; margin: 2px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: 6px; font-size: 11px; color: var(--muted);
-  font-family: "JetBrains Mono", monospace;
+  display: inline-block;
+  padding: 6px 12px;
+  margin: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
 }
-.filters { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-.filters .chip { cursor: pointer; padding: 6px 14px; font-size: 12px; }
-.filters .chip.active {
-  background: var(--accent-d); color: var(--accent);
+.chip:hover { color: var(--text); border-color: var(--dim); opacity: 1; }
+
+/* Цветные фильтры-severity (чипы) */
+.chip.sev-high   { background: rgba(255,92,92,0.10);  color: var(--danger); border-color: transparent; }
+.chip.sev-medium { background: rgba(255,184,77,0.10); color: var(--warn);   border-color: transparent; }
+.chip.sev-low    { background: rgba(140,140,150,0.10); color: var(--muted); border-color: transparent; }
+.chip.sev-clean  { background: rgba(110,231,183,0.10); color: var(--accent); border-color: transparent; }
+
+/* Активный чип — перебивает .sev-* благодаря порядку в файле */
+.chip.active {
+  background: var(--accent-d);
+  color: var(--accent);
   border-color: var(--accent);
 }
 
-/* BARS */
-.bar-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 8px 0;
-}
-.bar {
-  flex: 1; height: 6px; background: var(--surface-2);
-  border-radius: 3px; overflow: hidden;
-}
+/* Legacy-обёртка (если где-то ещё используется .filters) */
+.filters { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.filters .chip { padding: 6px 14px; }
+
+/* Новый .filter-row для upload.html */
+.filter-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* ============================================================
+   BARS
+   ============================================================ */
+.bar-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.bar { flex: 1; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
 .bar > span {
   display: block; height: 100%;
   background: linear-gradient(90deg, var(--accent), #4fd1a3);
   border-radius: 3px;
 }
 
-/* FLASH */
+/* ============================================================
+   FLASH
+   ============================================================ */
 .flash {
   padding: 12px 16px; margin-bottom: 16px;
   background: var(--accent-d); border: 1px solid var(--accent);
   border-radius: 10px; color: var(--accent); font-size: 13px;
 }
+
+/* ============================================================
+   HINT BOX
+   ============================================================ */
+.hint-box {
+  background: var(--surface-2);
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.hint-box strong { color: var(--text); }
+.hint-box .link { color: var(--accent); }
+
+/* ============================================================
+   BUTTONS (upload / download / danger)
+   ============================================================ */
+.upload-btn {
+  display: inline-block;
+  padding: 10px 18px;
+  background: linear-gradient(135deg, var(--accent), #4fd1a3);
+  color: var(--bg);
+  border: none;
+  border-radius: 10px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: none;
+  line-height: 1.2;
+  transition: transform 0.1s, opacity 0.15s;
+}
+.upload-btn:hover { transform: translateY(-1px); color: var(--bg); opacity: 1; }
+.upload-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+/* Красная кнопка отмены — должна идти ПОСЛЕ .upload-btn */
+.subtle-danger-btn {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+.subtle-danger-btn:hover {
+  background: var(--danger);
+  color: #fff;
+  opacity: 1;
+}
+
+/* ============================================================
+   UPLOAD FORM
+   ============================================================ */
+.upload-form { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.upload-input {
+  flex: 1; min-width: 220px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+.upload-input:focus { outline: none; border-color: var(--accent); }
+
+/* ============================================================
+   PAGE HEAD META / ACTION ROW
+   ============================================================ */
+.header-meta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 6px; }
+.action-row  { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+.action-row form { display: inline-block; margin: 0; }
+
+/* ============================================================
+   SOURCE TABS (/upload)
+   ============================================================ */
+.source-tabs {
+  display: flex; gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+.source-tab {
+  padding: 10px 16px;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+  font-size: 14px;
+}
+.source-tab:hover { color: var(--text); opacity: 1; }
+.source-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.source-tab .count {
+  display: inline-block;
+  background: var(--surface-2);
+  color: var(--dim);
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+/* ============================================================
+   UPLOAD DETAILS (свёрнутая форма)
+   ============================================================ */
+.upload-details {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0;
+  margin-bottom: 20px;
+}
+.upload-details > summary {
+  cursor: pointer;
+  padding: 16px 18px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  list-style: none;
+  user-select: none;
+}
+.upload-details > summary::-webkit-details-marker { display: none; }
+.upload-details > summary::after {
+  content: "▾";
+  float: right;
+  color: var(--dim);
+  transition: transform 0.15s;
+}
+.upload-details[open] > summary::after { transform: rotate(180deg); }
+.upload-details > summary:hover { background: var(--surface-2); border-radius: 12px 12px 0 0; }
+.upload-details .hint-box   { margin: 0 18px 12px; }
+.upload-details .upload-form { padding: 0 18px 18px; }

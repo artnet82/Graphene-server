@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ record.original_name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <a href="{{ url_for('upload') }}" class="link small">← все файлы</a>
+  <h1 class="ellipsis" title="{{ record.original_name }}">{{ record.original_name }}</h1>
+  <div class="header-meta">
+    <span class="sev sev-{{ record.severity|lower }}">{{ record.severity }}</span>
+    <span class="muted small">риск {{ record.risk_score }}</span>
+    <span class="muted small mono">{{ record.file_type }}</span>
+    <span class="muted small">{{ record.size|filesize }}</span>
+  </div>
+</header>
+
+<!-- ============================================================
+     Метаданные
+     ============================================================ -->
+<section class="grid">
+  <div class="stat">
+    <span class="stat-label">Риск</span>
+    <span class="stat-value {{ 'danger' if record.risk_score >= 40 }}">{{ record.risk_score }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Детекций</span>
+    <span class="stat-value">{{ detections|length }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Тип</span>
+    <span class="stat-value mono small">{{ record.file_type }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">Загружен</span>
+    <span class="stat-value small">{{ record.uploaded_at|dt }}</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Метаданные</h2></div>
+  <table class="table compact">
+    <tbody>
+      <tr><th style="width:180px">Upload ID</th>
+          <td class="mono small">{{ record.upload_id }}</td></tr>
+      <tr><th>SHA-256</th>
+          <td class="mono small">{{ record.sha256 }}</td></tr>
+      <tr><th>Размер</th>
+          <td class="mono small">{{ record.size }} байт ({{ record.size|filesize }})</td></tr>
+      <tr><th>Тип</th>
+          <td class="mono small">{{ record.file_type }}</td></tr>
+      <tr><th>Загрузил</th>
+          <td class="mono small">{{ record.uploaded_by or '—' }}</td></tr>
+      {% if record.relative_path %}
+      <tr><th>Путь на клиенте</th>
+          <td class="mono small">{{ record.relative_path }}</td></tr>
+      {% endif %}
+      <tr><th>Сохранён на сервере</th>
+          <td class="mono small ellipsis">{{ record.stored_path or '—' }}</td></tr>
+    </tbody>
+  </table>
+  <div class="action-row">
+    <a class="upload-btn" href="{{ url_for('download_uploaded', upload_id=record.upload_id) }}">
+      Скачать оригинал
+    </a>
+    <form method="post"
+          action="{{ url_for('delete_uploaded', upload_id=record.upload_id) }}"
+          onsubmit="return confirm('Удалить файл и запись?');"
+          style="display:inline">
+      <button type="submit" class="upload-btn danger-btn">Удалить</button>
+    </form>
+  </div>
+</section>
+
+<!-- ============================================================
+     Детекции
+     ============================================================ -->
+<section class="card">
+  <div class="card-head">
+    <h2>Детекции ({{ detections|length }})</h2>
+  </div>
+  {% if detections %}
+  <ul class="list">
+    {% for d in detections %}
+    <li>
+      <span class="sev sev-{{ d.severity|lower }}">{{ d.severity }}</span>
+      <div class="grow">
+        <div class="ellipsis"><strong>{{ d.name }}</strong></div>
+        {% if d.description %}
+          <div class="muted small">{{ d.description }}</div>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">
+    {% if record.severity == 'CLEAN' %}
+      Угроз не найдено — файл выглядит чистым по известным эвристикам.
+    {% else %}
+      Детекций нет, но уровень риска ненулевой (см. поле «Риск»).
+    {% endif %}
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Запросы файлов{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Запросы файлов</h1>
+  <p class="muted">Все запросы, отправленные устройствам</p>
+</header>
+
+{% if requests %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>Статус</th><th>Файл</th><th>Устройство</th>
+      <th>Создан</th><th>Выполнен</th><th>Кем</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in requests %}
+    <tr>
+      <td>
+        <span class="sev sev-{{ 'high' if r.status in ['rejected','expired'] else 'medium' if r.status == 'pending' else 'low' }}">
+          {{ r.status }}
+        </span>
+      </td>
+      <td class="mono small ellipsis" style="max-width:320px" title="{{ r.relative_path }}">
+        {% if r.upload_id %}
+          <a href="{{ url_for('uploaded_file_detail', upload_id=r.upload_id) }}">{{ r.file_name }}</a>
+        {% else %}{{ r.file_name }}{% endif %}
+      </td>
+      <td class="mono small">
+        <a href="{{ url_for('device_detail', device_id=r.device_id) }}">{{ r.device_id[:12] }}…</a>
+      </td>
+      <td class="mono small">{{ r.created_at|dt }}</td>
+      <td class="mono small">{{ r.fulfilled_at|dt if r.fulfilled_at else '—' }}</td>
+      <td class="mono small">{{ r.created_by }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">Запросов ещё не было. Откройте устройство → выберите файл в синхронизированных папках → «Запросить».</p>
+{% endif %}
+{% endblock %}
